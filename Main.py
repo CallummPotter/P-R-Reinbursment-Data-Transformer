@@ -206,7 +206,7 @@ def build_output_excel_bytes(
         # =========================================================
         # Colors
         # =========================================================
-        cyan = "#42C4C7"
+        blue = "#0080FF"
         orange = "#F26B21"
         green = "#70AD47"
         red = "#FF0000"
@@ -251,7 +251,7 @@ def build_output_excel_bytes(
         })
 
         fmt_title_top = fmt({
-            "bg_color": cyan,
+            "bg_color": blue,
             "bold": True,
             "underline": True,
             "align": "center",
@@ -262,7 +262,7 @@ def build_output_excel_bytes(
         })
 
         fmt_title_bottom = fmt({
-            "bg_color": cyan,
+            "bg_color": blue,
             "bold": True,
             "align": "center",
             "top": 0,
@@ -272,7 +272,7 @@ def build_output_excel_bytes(
         })
 
         fmt_section_header = fmt({
-            "bg_color": cyan,
+            "bg_color": blue,
             "bold": True,
             "align": "center",
             "top": bold,
@@ -311,7 +311,7 @@ def build_output_excel_bytes(
         })
 
         fmt_fin_hdr_left = fmt({
-            "bg_color": cyan,
+            "bg_color": blue,
             "bold": True,
             "align": "left",
             "left": bold,
@@ -321,7 +321,7 @@ def build_output_excel_bytes(
         })
 
         fmt_fin_hdr_mid = fmt({
-            "bg_color": cyan,
+            "bg_color": blue,
             "bold": True,
             "align": "center",
             "top": bold,
@@ -331,7 +331,7 @@ def build_output_excel_bytes(
         })
 
         fmt_fin_hdr_right = fmt({
-            "bg_color": cyan,
+            "bg_color": blue,
             "bold": True,
             "align": "center",
             "top": bold,
@@ -445,7 +445,7 @@ def build_output_excel_bytes(
         })
 
         fmt_detail_hdr_left = fmt({
-            "bg_color": cyan,
+            "bg_color": blue,
             "bold": True,
             "left": bold,
             "top": bold,
@@ -455,7 +455,7 @@ def build_output_excel_bytes(
         })
 
         fmt_detail_hdr_mid = fmt({
-            "bg_color": cyan,
+            "bg_color": blue,
             "bold": True,
             "top": bold,
             "left": thin,
@@ -466,7 +466,7 @@ def build_output_excel_bytes(
         })
 
         fmt_detail_hdr_right = fmt({
-            "bg_color": cyan,
+            "bg_color": blue,
             "bold": True,
             "top": bold,
             "left": thin,
@@ -494,7 +494,7 @@ def build_output_excel_bytes(
         })
 
         fmt_total_left = fmt({
-            "bg_color": cyan,
+            "bg_color": blue,
             "bold": True,
             "left": bold,
             "top": thin,
@@ -504,7 +504,7 @@ def build_output_excel_bytes(
         })
 
         fmt_total_mid_num = fmt({
-            "bg_color": cyan,
+            "bg_color": blue,
             "bold": True,
             "left": thin,
             "top": thin,
@@ -515,7 +515,7 @@ def build_output_excel_bytes(
         })
 
         fmt_total_mid_currency = fmt({
-            "bg_color": cyan,
+            "bg_color": blue,
             "bold": True,
             "left": thin,
             "top": thin,
@@ -526,7 +526,7 @@ def build_output_excel_bytes(
         })
 
         fmt_total_right_currency = fmt({
-            "bg_color": cyan,
+            "bg_color": blue,
             "bold": True,
             "left": thin,
             "top": thin,
@@ -537,7 +537,7 @@ def build_output_excel_bytes(
         })
 
         fmt_key_header = fmt({
-            "bg_color": cyan,
+            "bg_color": blue,
             "bold": True,
             "left": bold,
             "right": bold,
