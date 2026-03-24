@@ -15,13 +15,13 @@ st.image(
 )
 st.title("PAYG Reimbursement Calculator")
 
-# =========================
+# ========================
 # Helpers
 # =========================
 
 def normalize_string(value) -> str:
     if pd.isna(value):
-        return ""
+        return 
     return str(value).strip()
 
 
@@ -184,9 +184,9 @@ def build_output_excel_bytes(
     pr_fee_vat = total_transaction_fee - pr_fee_net
     pr_fee_inc_vat = total_transaction_fee
 
-    repayment_net = collected_net - pr_fee_net
-    repayment_vat = collected_vat - pr_fee_vat
-    repayment_inc_vat = collected_inc_vat - pr_fee_inc_vat
+    repayment_net = round(collected_net - pr_fee_net, 2)
+    repayment_vat = round(collected_vat - pr_fee_vat, 2)
+    repayment_inc_vat = round(collected_inc_vat - pr_fee_inc_vat, 2)
 
     with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
         workbook = writer.book
@@ -722,13 +722,21 @@ def build_output_excel_bytes(
 # App
 # =========================
 
-revenue_file = st.file_uploader("Upload Revenue CSV", type=["csv"])
-devices_file = st.file_uploader("Upload Devices CSV", type=["csv"])
+revenue_file = st.file_uploader("Upload Revenue File (CSV or Excel)", type=["csv", "xlsx"])
+devices_file = st.file_uploader("Upload Devices File (CSV or Excel)", type=["csv", "xlsx"])
 
 if revenue_file and devices_file:
     try:
-        revenue_raw = pd.read_csv(revenue_file)
-        devices_raw = pd.read_csv(devices_file)
+        # Determine file type and read accordingly
+        if revenue_file.name.endswith(".csv"):
+            revenue_raw = pd.read_csv(revenue_file)
+        elif revenue_file.name.endswith(".xlsx"):
+            revenue_raw = pd.read_excel(revenue_file)
+
+        if devices_file.name.endswith(".csv"):
+            devices_raw = pd.read_csv(devices_file)
+        elif devices_file.name.endswith(".xlsx"):
+            devices_raw = pd.read_excel(devices_file)
 
         revenue_df = standardize_columns(revenue_raw)
         devices_df = standardize_columns(devices_raw)
@@ -892,4 +900,4 @@ if revenue_file and devices_file:
         st.error(f"Processing failed: {e}")
 
 else:
-    st.info("Please upload both the Revenue CSV and the Devices CSV.")
+    st.info("Please upload both the Revenue file and the Devices file.")
