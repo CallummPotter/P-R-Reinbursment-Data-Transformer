@@ -1,10 +1,12 @@
 import io
 import re
+import zipfile
+from collections import defaultdict
 from typing import Tuple
 
 import pandas as pd
 import streamlit as st
-import xlsxwriter 
+import xlsxwriter
 from PIL import Image
 
 
@@ -21,7 +23,7 @@ st.title("PAYG Reimbursement Calculator")
 
 def normalize_string(value) -> str:
     if pd.isna(value):
-        return 
+        return ""
     return str(value).strip()
 
 
@@ -71,19 +73,26 @@ def determine_period(start_series: pd.Series, end_series: pd.Series) -> Tuple[in
 
 
 def choose_organisation(devices_df: pd.DataFrame, revenue_df: pd.DataFrame) -> str:
-    if "deviceorganisation" in devices_df.columns:
-        vals = devices_df["deviceorganisation"].dropna().astype(str).str.strip()
-        vals = vals[vals != ""]
-        if not vals.empty:
-            return vals.iloc[0]
-
     if "organisation" in revenue_df.columns:
         vals = revenue_df["organisation"].dropna().astype(str).str.strip()
         vals = vals[vals != ""]
         if not vals.empty:
-            return vals.iloc[0]
+            return vals.value_counts().idxmax()
+
+    if "deviceorganisation" in devices_df.columns:
+        vals = devices_df["deviceorganisation"].dropna().astype(str).str.strip()
+        vals = vals[vals != ""]
+        if not vals.empty:
+            return vals.value_counts().idxmax()
 
     return "Unknown Organisation"
+
+
+def build_quote_reference(organisation: str, quarter: int, year: int) -> str:
+    org = normalize_string(organisation)
+    org = re.sub(r'[\\/*?:"<>|]', "", org)
+    org = re.sub(r"\s+", "_", org)
+    return f"PAG_{org}_Q{quarter}_{year}"
 
 
 def build_group_key(row) -> str:
@@ -101,7 +110,6 @@ def build_group_key(row) -> str:
     if mpan_device:
         return f"MPAN_{mpan_device}"
     return "UNKNOWN"
-
 
 
 def deduplicate_sessions_with_audit(df: pd.DataFrame) -> Tuple[pd.DataFrame, pd.DataFrame]:
@@ -155,7 +163,54 @@ def deduplicate_sessions_with_audit(df: pd.DataFrame) -> Tuple[pd.DataFrame, pd.
 
     return deduped_df, audit_df
 
+
+def read_table_file(file_name: str, file_bytes: bytes) -> pd.DataFrame:
+    lower_name = file_name.lower()
+
+    if lower_name.endswith(".csv"):
+        return pd.read_csv(io.BytesIO(file_bytes))
+    if lower_name.endswith(".xlsx"):
+        return pd.read_excel(io.BytesIO(file_bytes))
+
+    raise ValueError("Unsupported file type. Only CSV and XLSX are allowed.")
+
+
+def detect_file_kind(df: pd.DataFrame) -> str:
+    cols = set(df.columns)
+
+    revenue_required = {"transactionid", "connector", "repayment", "start", "end"}
+    device_signals = {"deviceorganisation", "mpan", "stationname", "device"}
+
+    if revenue_required.issubset(cols):
+        return "revenue"
+
+    if "deviceorganisation" in cols:
+        return "device"
+
+    if len(device_signals.intersection(cols)) >= 2 and "transactionid" not in cols:
+        return "device"
+
+    return "unknown"
+
+
+def get_most_common_org_from_df(df: pd.DataFrame, file_kind: str) -> str:
+    if file_kind == "revenue" and "organisation" in df.columns:
+        vals = df["organisation"].dropna().astype(str).str.strip()
+        vals = vals[vals != ""]
+        if not vals.empty:
+            return vals.value_counts().idxmax()
+
+    if file_kind == "device" and "deviceorganisation" in df.columns:
+        vals = df["deviceorganisation"].dropna().astype(str).str.strip()
+        vals = vals[vals != ""]
+        if not vals.empty:
+            return vals.value_counts().idxmax()
+
+    return "Unknown Organisation"
+
+
 logo_image = Image.open("LOGO.png")
+
 
 def build_output_excel_bytes(
     agg_df: pd.DataFrame,
@@ -163,7 +218,7 @@ def build_output_excel_bytes(
     year: int,
     quarter: int,
     quote_reference: str = "INSERT QUOTE REFERENCE HERE",
-    logo_path: str | None = None,
+    logo_path: io.BytesIO | None = None,
 ) -> io.BytesIO:
     output = io.BytesIO()
 
@@ -175,7 +230,6 @@ def build_output_excel_bytes(
     total_transaction_fee = float(agg_df["TransactionFee"].sum())
     total_repayment = float(agg_df["Repayment"].sum())
 
-    # VAT-style split based on your formulas
     collected_net = (total_collected_fee / 120) * 100 if total_collected_fee else 0.0
     collected_vat = total_collected_fee - collected_net
     collected_inc_vat = total_collected_fee
@@ -186,38 +240,27 @@ def build_output_excel_bytes(
 
     repayment_net = round(collected_net - pr_fee_net, 2)
     repayment_vat = round(collected_vat - pr_fee_vat, 2)
-    repayment_inc_vat = round(collected_inc_vat - pr_fee_inc_vat, 2)
+    repayment_inc_vat = round(total_repayment, 2)
 
     with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
         workbook = writer.book
         worksheet = workbook.add_worksheet(output_sheet_name)
         writer.sheets[output_sheet_name] = worksheet
 
-        # =========================================================
-        # Column widths
-        # =========================================================
         worksheet.set_column("A:A", 4)
         worksheet.set_column("B:B", 52)
         worksheet.set_column("C:C", 28)
         worksheet.set_column("D:D", 28)
         worksheet.set_column("E:E", 28)
         worksheet.set_column("F:F", 28)
+        worksheet.set_column("I:L", 18)
 
-        # =========================================================
-        # Colors
-        # =========================================================
         blue = "#0080FF"
         orange = "#F26B21"
         green = "#70AD47"
         red = "#FF0000"
         grey_text = "#666666"
-        black = "#000000"
 
-        # =========================================================
-        # Border helpers
-        # =========================================================
-        # xlsxwriter border indexes:
-        # 1 = thin, 2 = medium
         thin = 1
         bold = 2
 
@@ -231,9 +274,6 @@ def build_output_excel_bytes(
                 base.update(props)
             return workbook.add_format(base)
 
-        # =========================================================
-        # Core formats
-        # =========================================================
         fmt_grey_note = fmt({
             "font_color": grey_text,
             "align": "center",
@@ -348,15 +388,6 @@ def build_output_excel_bytes(
             "align": "left",
         })
 
-        fmt_label_left_bold = fmt({
-            "left": bold,
-            "top": thin,
-            "bottom": thin,
-            "right": thin,
-            "align": "left",
-            "bold": True,
-        })
-
         fmt_label_left_bottombold = fmt({
             "left": bold,
             "top": thin,
@@ -388,28 +419,6 @@ def build_output_excel_bytes(
             "right": bold,
             "align": "right",
             "font_color": orange,
-            "num_format": '£#,##0.00',
-        })
-
-        fmt_currency_green_bottomthin = fmt({
-            "left": thin,
-            "top": thin,
-            "bottom": 0,
-            "right": thin,
-            "align": "right",
-            "font_color": green,
-            "bold": True,
-            "num_format": '£#,##0.00',
-        })
-
-        fmt_currency_red_bottomthin_rightbold = fmt({
-            "left": thin,
-            "top": thin,
-            "bottom": 0,
-            "right": bold,
-            "align": "right",
-            "font_color": red,
-            "bold": True,
             "num_format": '£#,##0.00',
         })
 
@@ -543,7 +552,7 @@ def build_output_excel_bytes(
             "right": bold,
             "top": bold,
             "bottom": thin,
-            "align": "left",
+            "align": "center",
         })
 
         fmt_key_orange = fmt({
@@ -573,30 +582,22 @@ def build_output_excel_bytes(
             "align": "left",
         })
 
-        # =========================================================
-        # Row heights
-        # =========================================================
-        worksheet.set_row(1, 38)   # row 2
-        worksheet.set_row(3, 28)   # row 4
-        worksheet.set_row(4, 28)   # row 5
-        worksheet.set_row(6, 24)   # row 7
-        worksheet.set_row(15, 24)  # row 16
+        worksheet.set_row(1, 38)
+        worksheet.set_row(3, 28)
+        worksheet.set_row(4, 28)
+        worksheet.set_row(6, 24)
+        worksheet.set_row(15, 24)
 
-        # Hide gridlines
         worksheet.hide_gridlines(2)
 
-        # =========================================================
-        # ROW 2
-        # =========================================================
         if logo_path:
+            logo_path.seek(0)
             img = Image.open(logo_path)
-
             img_width, img_height = img.size
-
-            # Target size (adjust these to fit your layout nicely)
             target_width = 180
             target_height = int((target_width / img_width) * img_height)
 
+            logo_path.seek(0)
             worksheet.insert_image(
                 "B2",
                 "logo.png",
@@ -609,32 +610,16 @@ def build_output_excel_bytes(
                     "object_position": 1,
                 },
             )
+
         worksheet.write("E2", "Please quote this reference\non your invoice:", fmt_grey_note)
         worksheet.write("F2", quote_reference, fmt_grey_note_bold)
 
-        # =========================================================
-        # ROW 3
-        # =========================================================
         worksheet.merge_range("B3:F3", "", fmt_black_box)
-
-        # =========================================================
-        # ROW 4
-        # =========================================================
         worksheet.merge_range("B4:F4", "Customer Pay As You Go (PAYG) Finances", fmt_title_top)
-
-        # =========================================================
-        # ROW 5
-        # =========================================================
         worksheet.merge_range("B5:F5", period_label, fmt_title_bottom)
 
-        # =========================================================
-        # ROW 7
-        # =========================================================
         worksheet.merge_range("B7:F7", "Statistics:", fmt_section_header)
 
-        # =========================================================
-        # ROW 8
-        # =========================================================
         worksheet.merge_range(
             "B8:C8",
             f"Total Energy Consumed by EV Charging in {period_label}",
@@ -644,50 +629,32 @@ def build_output_excel_bytes(
         worksheet.write("E8", "kWh", fmt_stats_unit)
         worksheet.write_blank("F8", None, fmt_stats_blank)
 
-        # =========================================================
-        # ROW 10
-        # =========================================================
         worksheet.merge_range("B10:C10", "Financial summary", fmt_fin_hdr_left)
         worksheet.write("D10", "Totals (Net):", fmt_fin_hdr_mid)
         worksheet.write("E10", "VAT Incurred:", fmt_fin_hdr_mid)
         worksheet.write("F10", "Totals (inc. VAT):", fmt_fin_hdr_right)
 
-        # =========================================================
-        # ROW 11
-        # =========================================================
         worksheet.merge_range("B11:C11", f"Sum of Collected Fees for {period_label}", fmt_label_left)
         worksheet.write_number("D11", round(collected_net, 2), fmt_currency_thin)
         worksheet.write_number("E11", round(collected_vat, 2), fmt_currency_thin)
         worksheet.write_number("F11", round(collected_inc_vat, 2), fmt_currency_rightbold)
 
-        # =========================================================
-        # ROW 12
-        # =========================================================
         worksheet.merge_range("B12:C12", f"Sum of P&R transaction Fee for {period_label}", fmt_label_left)
         worksheet.write_number("D12", round(pr_fee_net, 2), fmt_currency_thin)
         worksheet.write_number("E12", round(pr_fee_vat, 2), fmt_currency_thin)
         worksheet.write_number("F12", round(pr_fee_inc_vat, 2), fmt_currency_orange_rightbold)
 
-        # =========================================================
-        # ROW 13
-        # =========================================================
         worksheet.merge_range("B13:C13", "Sum of Repayment Due to Customer", fmt_label_left_bottombold)
         worksheet.write_number("D13", round(repayment_net, 2), fmt_currency_bottombold)
         worksheet.write_number("E13", round(repayment_vat, 2), fmt_currency_green_bottombold)
         worksheet.write_number("F13", round(repayment_inc_vat, 2), fmt_currency_red_bottombold_rightbold)
 
-        # =========================================================
-        # ROW 16
-        # =========================================================
         worksheet.write("B16", "Row Labels", fmt_detail_hdr_left)
         worksheet.write("C16", "Sum of Total_energy (kWh)", fmt_detail_hdr_mid)
         worksheet.write("D16", "Sum of Collected_fee", fmt_detail_hdr_mid)
         worksheet.write("E16", "Sum of PR_Transaction_fee", fmt_detail_hdr_mid)
         worksheet.write("F16", "Sum of Repayment", fmt_detail_hdr_right)
 
-        # =========================================================
-        # ROW 17 onward - detail rows
-        # =========================================================
         start_excel_row = 17
         for idx, row in enumerate(agg_df.itertuples(index=False), start=start_excel_row):
             worksheet.write(f"B{idx}", row.ResolvedCharger, fmt_detail_text)
@@ -696,9 +663,6 @@ def build_output_excel_bytes(
             worksheet.write_number(f"E{idx}", float(row.TransactionFee), fmt_detail_currency)
             worksheet.write_number(f"F{idx}", float(row.Repayment), fmt_detail_currency)
 
-        # =========================================================
-        # Grand total row
-        # =========================================================
         grand_total_excel_row = start_excel_row + len(agg_df)
         worksheet.write(f"B{grand_total_excel_row}", "Grand Total", fmt_total_left)
         worksheet.write_number(f"C{grand_total_excel_row}", round(total_energy, 2), fmt_total_mid_num)
@@ -706,198 +670,392 @@ def build_output_excel_bytes(
         worksheet.write_number(f"E{grand_total_excel_row}", round(total_transaction_fee, 2), fmt_total_mid_currency)
         worksheet.write_number(f"F{grand_total_excel_row}", round(total_repayment, 2), fmt_total_right_currency)
 
-        # =========================================================
-        # Key box
-        # =========================================================
-        worksheet.write("B22", "Key", fmt_key_header)
-        worksheet.write("B23", "Our Invoice will say amount due £0", fmt_key_orange)
-        worksheet.write("B24", "Final figure to invoice us for", fmt_key_red)
-        worksheet.write("B25", "Amount in VAT which customer should repay to HMRC", fmt_key_green)
+        worksheet.merge_range("I10:L10", "Key", fmt_key_header)
+        worksheet.merge_range("I11:L11", "Our Invoice will say amount due £0", fmt_key_orange)
+        worksheet.merge_range("I12:L12", "Final figure to invoice us for", fmt_key_red)
+        worksheet.merge_range("I13:L13", "Amount in VAT which customer should repay to HMRC", fmt_key_green)
 
     output.seek(0)
     return output
+
+
+def process_revenue_and_devices(
+    revenue_raw: pd.DataFrame,
+    devices_raw: pd.DataFrame,
+    logo_image: Image.Image,
+) -> dict:
+    revenue_df = standardize_columns(revenue_raw)
+    devices_df = standardize_columns(devices_raw)
+
+    required_revenue_cols = ["transactionid", "connector", "repayment", "start", "end"]
+    missing = [c for c in required_revenue_cols if c not in revenue_df.columns]
+    if missing:
+        raise ValueError("Revenue file is missing required columns: " + ", ".join(missing))
+
+    optional_numeric_cols = {
+        "totalenergykwh": "TotalEnergy",
+        "collectedfee": "CollectedFee",
+        "prtransactionfee": "TransactionFee",
+    }
+
+    for source_col in optional_numeric_cols:
+        if source_col not in revenue_df.columns:
+            revenue_df[source_col] = 0
+
+    if "device" in revenue_df.columns and "device" in devices_df.columns:
+        merged = revenue_df.merge(
+            devices_df,
+            on="device",
+            how="left",
+            suffixes=("", "_dev")
+        )
+    else:
+        merged = revenue_df.copy()
+        if "mpan_dev" not in merged.columns:
+            merged["mpan_dev"] = None
+
+    for col in ["stationname", "device", "mpan", "mpan_dev", "organisation"]:
+        if col not in merged.columns:
+            merged[col] = None
+
+    merged["start_raw"] = merged["start"]
+    merged["end_raw"] = merged["end"]
+
+    merged["start_parsed"] = parse_datetime_series(merged["start"])
+    merged["end_parsed"] = parse_datetime_series(merged["end"])
+
+    merged["repayment"] = pd.to_numeric(merged["repayment"], errors="coerce").fillna(0)
+    merged["totalenergykwh"] = pd.to_numeric(merged["totalenergykwh"], errors="coerce").fillna(0)
+    merged["collectedfee"] = pd.to_numeric(merged["collectedfee"], errors="coerce").fillna(0)
+    merged["prtransactionfee"] = pd.to_numeric(merged["prtransactionfee"], errors="coerce").fillna(0)
+
+    merged["ResolvedCharger"] = merged.apply(build_group_key, axis=1)
+
+    deduped, audit_df = deduplicate_sessions_with_audit(merged)
+
+    agg_df = (
+        deduped.groupby("ResolvedCharger", dropna=False)
+        .agg(
+            SessionCount=("repayment", "count"),
+            Repayment=("repayment", "sum"),
+            TotalEnergy=("totalenergykwh", "sum"),
+            CollectedFee=("collectedfee", "sum"),
+            TransactionFee=("prtransactionfee", "sum"),
+        )
+        .reset_index()
+        .sort_values("ResolvedCharger")
+    )
+
+    organisation = choose_organisation(devices_df, revenue_df)
+    year, quarter = determine_period(deduped["start_parsed"], deduped["end_parsed"])
+    quote_reference = build_quote_reference(organisation, quarter, year)
+    output_filename = f"{year} Q{quarter} PAYG Revenue- {sanitize_filename_part(organisation)}.xlsx"
+
+    img_bytes = io.BytesIO()
+    logo_image.save(img_bytes, format="PNG")
+    img_bytes.seek(0)
+
+    output = build_output_excel_bytes(
+        agg_df=agg_df,
+        organisation=organisation,
+        year=year,
+        quarter=quarter,
+        quote_reference=quote_reference,
+        logo_path=img_bytes,
+    )
+
+    unparsed_start = int(((merged["start_raw"].notna()) & (merged["start_parsed"].isna())).sum())
+    unparsed_end = int(((merged["end_raw"].notna()) & (merged["end_parsed"].isna())).sum())
+    dropped_count = int((audit_df["AuditStatus"] == "DROPPED_DUPLICATE").sum())
+
+    total_sessions = int(agg_df["SessionCount"].sum())
+    total_repayment = float(agg_df["Repayment"].sum())
+    total_energy = float(agg_df["TotalEnergy"].sum())
+    total_collected_fee = float(agg_df["CollectedFee"].sum())
+    total_transaction_fee = float(agg_df["TransactionFee"].sum())
+
+    return {
+        "organisation": organisation,
+        "year": year,
+        "quarter": quarter,
+        "quote_reference": quote_reference,
+        "output_filename": output_filename,
+        "output_bytes": output.getvalue(),
+        "agg_df": agg_df,
+        "audit_df": audit_df,
+        "unparsed_start": unparsed_start,
+        "unparsed_end": unparsed_end,
+        "dropped_count": dropped_count,
+        "total_sessions": total_sessions,
+        "total_repayment": total_repayment,
+        "total_energy": total_energy,
+        "total_collected_fee": total_collected_fee,
+        "total_transaction_fee": total_transaction_fee,
+    }
+
+
+def process_bulk_zip(zip_file, logo_image: Image.Image):
+    successes = []
+    skips = []
+
+    revenue_files_by_org = defaultdict(list)
+    device_files_by_org = defaultdict(list)
+
+    with zipfile.ZipFile(zip_file) as zf:
+        members = [m for m in zf.infolist() if not m.is_dir()]
+
+        if not members:
+            raise ValueError("The ZIP file is empty.")
+
+        supported_members = [
+            m for m in members
+            if m.filename.lower().endswith((".csv", ".xlsx"))
+        ]
+
+        if not supported_members:
+            raise ValueError("No supported CSV or XLSX files were found in the ZIP.")
+
+        for member in supported_members:
+            try:
+                file_bytes = zf.read(member.filename)
+                raw_df = read_table_file(member.filename, file_bytes)
+                standardized_df = standardize_columns(raw_df)
+                kind = detect_file_kind(standardized_df)
+                org = get_most_common_org_from_df(standardized_df, kind)
+
+                if kind == "revenue":
+                    revenue_files_by_org[org].append({
+                        "name": member.filename,
+                        "raw_df": raw_df,
+                    })
+                elif kind == "device":
+                    device_files_by_org[org].append({
+                        "name": member.filename,
+                        "raw_df": raw_df,
+                    })
+                else:
+                    skips.append({
+                        "file": member.filename,
+                        "organisation": org,
+                        "reason": "Could not determine whether file is Revenue or Devices.",
+                    })
+
+            except Exception as e:
+                skips.append({
+                    "file": member.filename,
+                    "organisation": "Unknown Organisation",
+                    "reason": f"Failed to read file: {e}",
+                })
+
+    all_orgs = sorted(set(revenue_files_by_org.keys()) | set(device_files_by_org.keys()))
+
+    zip_output = io.BytesIO()
+
+    with zipfile.ZipFile(zip_output, "w", zipfile.ZIP_DEFLATED) as out_zip:
+        for org in all_orgs:
+            revenue_candidates = revenue_files_by_org.get(org, [])
+            device_candidates = device_files_by_org.get(org, [])
+
+            if not revenue_candidates:
+                for device_file in device_candidates:
+                    skips.append({
+                        "file": device_file["name"],
+                        "organisation": org,
+                        "reason": "No matching Revenue file found for this organisation.",
+                    })
+                continue
+
+            if not device_candidates:
+                for revenue_file in revenue_candidates:
+                    skips.append({
+                        "file": revenue_file["name"],
+                        "organisation": org,
+                        "reason": "No matching Devices file found for this organisation.",
+                    })
+                continue
+
+            if len(revenue_candidates) > 1:
+                file_list = ", ".join(f["name"] for f in revenue_candidates)
+                for revenue_file in revenue_candidates:
+                    skips.append({
+                        "file": revenue_file["name"],
+                        "organisation": org,
+                        "reason": f"Multiple Revenue files found for this organisation: {file_list}",
+                    })
+                continue
+
+            if len(device_candidates) > 1:
+                file_list = ", ".join(f["name"] for f in device_candidates)
+                for device_file in device_candidates:
+                    skips.append({
+                        "file": device_file["name"],
+                        "organisation": org,
+                        "reason": f"Multiple Devices files found for this organisation: {file_list}",
+                    })
+                continue
+
+            revenue_file = revenue_candidates[0]
+            device_file = device_candidates[0]
+
+            try:
+                result = process_revenue_and_devices(
+                    revenue_raw=revenue_file["raw_df"],
+                    devices_raw=device_file["raw_df"],
+                    logo_image=logo_image,
+                )
+
+                out_zip.writestr(result["output_filename"], result["output_bytes"])
+
+                successes.append({
+                    "organisation": result["organisation"],
+                    "output_filename": result["output_filename"],
+                    "revenue_file": revenue_file["name"],
+                    "device_file": device_file["name"],
+                    "year": result["year"],
+                    "quarter": result["quarter"],
+                    "total_sessions": result["total_sessions"],
+                    "total_repayment": result["total_repayment"],
+                })
+
+            except Exception as e:
+                skips.append({
+                    "file": f"{revenue_file['name']} + {device_file['name']}",
+                    "organisation": org,
+                    "reason": f"Matched pair failed to process: {e}",
+                })
+
+    zip_output.seek(0)
+    return zip_output, successes, skips
 
 
 # =========================
 # App
 # =========================
 
-revenue_file = st.file_uploader("Upload Revenue File (CSV or Excel)", type=["csv", "xlsx"])
-devices_file = st.file_uploader("Upload Devices File (CSV or Excel)", type=["csv", "xlsx"])
+bulk_mode = st.toggle("Bulk upload mode (ZIP input)", value=False)
 
-if revenue_file and devices_file:
-    try:
-        # Determine file type and read accordingly
-        if revenue_file.name.endswith(".csv"):
-            revenue_raw = pd.read_csv(revenue_file)
-        elif revenue_file.name.endswith(".xlsx"):
-            revenue_raw = pd.read_excel(revenue_file)
+if not bulk_mode:
+    revenue_file = st.file_uploader("Upload Revenue File (CSV or Excel)", type=["csv", "xlsx"])
+    devices_file = st.file_uploader("Upload Devices File (CSV or Excel)", type=["csv", "xlsx"])
 
-        if devices_file.name.endswith(".csv"):
-            devices_raw = pd.read_csv(devices_file)
-        elif devices_file.name.endswith(".xlsx"):
-            devices_raw = pd.read_excel(devices_file)
+    if revenue_file and devices_file:
+        try:
+            revenue_raw = read_table_file(revenue_file.name, revenue_file.getvalue())
+            devices_raw = read_table_file(devices_file.name, devices_file.getvalue())
 
-        revenue_df = standardize_columns(revenue_raw)
-        devices_df = standardize_columns(devices_raw)
-
-        required_revenue_cols = ["transactionid", "connector", "repayment", "start", "end"]
-        missing = [c for c in required_revenue_cols if c not in revenue_df.columns]
-        if missing:
-            st.error("Revenue CSV is missing required columns: " + ", ".join(missing))
-            st.stop()
-
-        optional_numeric_cols = {
-            "totalenergykwh": "TotalEnergy",
-            "collectedfee": "CollectedFee",
-            "prtransactionfee": "TransactionFee",
-        }
-
-        for source_col in optional_numeric_cols:
-            if source_col not in revenue_df.columns:
-                revenue_df[source_col] = 0
-
-        if "device" in revenue_df.columns and "device" in devices_df.columns:
-            merged = revenue_df.merge(
-                devices_df,
-                on="device",
-                how="left",
-                suffixes=("", "_dev")
-            )
-        else:
-            merged = revenue_df.copy()
-            if "mpan_dev" not in merged.columns:
-                merged["mpan_dev"] = None
-
-        for col in ["stationname", "device", "mpan", "mpan_dev", "organisation"]:
-            if col not in merged.columns:
-                merged[col] = None
-
-        merged["start_raw"] = merged["start"]
-        merged["end_raw"] = merged["end"]
-
-        merged["start_parsed"] = parse_datetime_series(merged["start"])
-        merged["end_parsed"] = parse_datetime_series(merged["end"])
-
-        merged["repayment"] = pd.to_numeric(merged["repayment"], errors="coerce").fillna(0)
-        merged["totalenergykwh"] = pd.to_numeric(merged["totalenergykwh"], errors="coerce").fillna(0)
-        merged["collectedfee"] = pd.to_numeric(merged["collectedfee"], errors="coerce").fillna(0)
-        merged["prtransactionfee"] = pd.to_numeric(merged["prtransactionfee"], errors="coerce").fillna(0)
-
-        merged["ResolvedCharger"] = merged.apply(build_group_key, axis=1)
-
-        deduped, audit_df = deduplicate_sessions_with_audit(merged)
-
-        agg_df = (
-            deduped.groupby("ResolvedCharger", dropna=False)
-            .agg(
-                SessionCount=("repayment", "count"),
-                Repayment=("repayment", "sum"),
-                TotalEnergy=("totalenergykwh", "sum"),
-                CollectedFee=("collectedfee", "sum"),
-                TransactionFee=("prtransactionfee", "sum"),
-            )
-            .reset_index()
-            .sort_values("ResolvedCharger")
-        )
-
-        organisation = choose_organisation(devices_df, revenue_df)
-        year, quarter = determine_period(deduped["start_parsed"], deduped["end_parsed"])
-        output_filename = f"{year} Q{quarter} PAYG Revenue- {sanitize_filename_part(organisation)}.xlsx"
-
-        # Convert to bytes (needed for Excel)
-        img_bytes = io.BytesIO()
-        logo_image.save(img_bytes, format="PNG")
-        img_bytes.seek(0)
-
-        # Build Excel with logo
-        output = build_output_excel_bytes(
-            agg_df=agg_df,
-            organisation=organisation,
-            year=year,
-            quarter=quarter,
-            quote_reference="INSERT QUOTE REFERENCE HERE",
-            logo_path=img_bytes,
-        )
-
-        unparsed_start = int(((merged["start_raw"].notna()) & (merged["start_parsed"].isna())).sum())
-        unparsed_end = int(((merged["end_raw"].notna()) & (merged["end_parsed"].isna())).sum())
-        dropped_count = int((audit_df["AuditStatus"] == "DROPPED_DUPLICATE").sum())
-
-        total_sessions = int(agg_df["SessionCount"].sum())
-        total_repayment = float(agg_df["Repayment"].sum())
-        total_energy = float(agg_df["TotalEnergy"].sum())
-        total_collected_fee = float(agg_df["CollectedFee"].sum())
-        total_transaction_fee = float(agg_df["TransactionFee"].sum())
-
-        st.success("Processing complete.")
-
-        if unparsed_start or unparsed_end:
-            st.warning(
-                f"Some times could not be parsed. Start parse failures: {unparsed_start}, "
-                f"End parse failures: {unparsed_end}. These rows were kept, but not deduped by time."
+            result = process_revenue_and_devices(
+                revenue_raw=revenue_raw,
+                devices_raw=devices_raw,
+                logo_image=logo_image,
             )
 
-        col1, col2, col3, col4 = st.columns(4)
-        col1.metric("Chargers", len(agg_df))
-        col2.metric("Final Sessions", total_sessions)
-        col3.metric("Dropped Duplicates", dropped_count)
-        col4.metric("Total Repayment", f"£{total_repayment:,.2f}")
+            st.success("Processing complete.")
 
-        col5, col6, col7 = st.columns(3)
-        col5.metric("Total Energy Consumed", f"{total_energy:,.2f} kWh")
-        col6.metric("Total Collected Fee", f"£{total_collected_fee:,.2f}")
-        col7.metric("Total Transaction Fee", f"£{total_transaction_fee:,.2f}")
+            if result["unparsed_start"] or result["unparsed_end"]:
+                st.warning(
+                    f"Some times could not be parsed. Start parse failures: {result['unparsed_start']}, "
+                    f"End parse failures: {result['unparsed_end']}. These rows were kept, but not deduped by time."
+                )
 
-        st.subheader("Summary")
-        st.dataframe(agg_df, use_container_width=True)
+            col1, col2, col3, col4 = st.columns(4)
+            col1.metric("Chargers", len(result["agg_df"]))
+            col2.metric("Final Sessions", result["total_sessions"])
+            col3.metric("Dropped Duplicates", result["dropped_count"])
+            col4.metric("Total Repayment", f"£{result['total_repayment']:,.2f}")
 
-        st.subheader("Dedupe Audit Preview")
-        audit_display_cols = [
-            c for c in [
-                "AuditStatus",
-                "ResolvedCharger",
-                "transactionid",
-                "device",
-                "stationname",
-                "start_raw",
-                "end_raw",
-                "connector",
-                "repayment",
-                "totalenergykwh",
-                "collectedfee",
-                "prtransactionfee",
-                "mpan",
-                "mpan_dev",
-                "organisation",
+            col5, col6, col7 = st.columns(3)
+            col5.metric("Total Energy Consumed", f"{result['total_energy']:,.2f} kWh")
+            col6.metric("Total Collected Fee", f"£{result['total_collected_fee']:,.2f}")
+            col7.metric("Total Transaction Fee", f"£{result['total_transaction_fee']:,.2f}")
+
+            st.subheader("Summary")
+            st.dataframe(result["agg_df"], use_container_width=True)
+
+            st.subheader("Dedupe Audit Preview")
+            audit_df = result["audit_df"]
+            audit_display_cols = [
+                c for c in [
+                    "AuditStatus",
+                    "ResolvedCharger",
+                    "transactionid",
+                    "device",
+                    "stationname",
+                    "start_raw",
+                    "end_raw",
+                    "connector",
+                    "repayment",
+                    "totalenergykwh",
+                    "collectedfee",
+                    "prtransactionfee",
+                    "mpan",
+                    "mpan_dev",
+                    "organisation",
+                ]
+                if c in audit_df.columns
             ]
-            if c in audit_df.columns
-        ]
 
-        def audit_row_style(row):
-            status = row.get("AuditStatus", "")
-            if status == "DROPPED_DUPLICATE":
-                return ["background-color: #FCE4D6; color: #C00000;"] * len(row)
-            if status == "KEPT":
-                return ["background-color: #E2F0D9;"] * len(row)
-            if status == "KEPT_UNPARSED_TIME":
-                return ["background-color: #FFF2CC;"] * len(row)
-            return [""] * len(row)
+            def audit_row_style(row):
+                status = row.get("AuditStatus", "")
+                if status == "DROPPED_DUPLICATE":
+                    return ["background-color: #FCE4D6; color: #C00000;"] * len(row)
+                if status == "KEPT":
+                    return ["background-color: #E2F0D9;"] * len(row)
+                if status == "KEPT_UNPARSED_TIME":
+                    return ["background-color: #FFF2CC;"] * len(row)
+                return [""] * len(row)
 
-        st.dataframe(
-            audit_df[audit_display_cols].style.apply(audit_row_style, axis=1),
-            use_container_width=True,
-        )
+            st.dataframe(
+                audit_df[audit_display_cols].style.apply(audit_row_style, axis=1),
+                use_container_width=True,
+            )
 
-        st.download_button(
-            label="Download Excel Output",
-            data=output.getvalue(),
-            file_name=output_filename,
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        )
+            st.download_button(
+                label="Download Excel Output",
+                data=result["output_bytes"],
+                file_name=result["output_filename"],
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            )
 
-    except Exception as e:
-        st.error(f"Processing failed: {e}")
+        except Exception as e:
+            st.error(f"Processing failed: {e}")
+
+    else:
+        st.info("Please upload both the Revenue file and the Devices file.")
 
 else:
-    st.info("Please upload both the Revenue file and the Devices file.")
+    bulk_zip = st.file_uploader(
+        "Upload ZIP containing Revenue and Devices CSV/XLSX files",
+        type=["zip"]
+    )
+
+    if bulk_zip:
+        try:
+            zip_output, successes, skips = process_bulk_zip(bulk_zip, logo_image)
+
+            if successes:
+                st.success(f"Bulk processing complete. Generated {len(successes)} report(s).")
+            else:
+                st.warning("Bulk processing completed, but no reports could be generated.")
+
+            if successes:
+                st.subheader("Generated Reports")
+                success_df = pd.DataFrame(successes)
+                st.dataframe(success_df, use_container_width=True)
+
+                st.download_button(
+                    label="Download All Reports (ZIP)",
+                    data=zip_output.getvalue(),
+                    file_name="PAYG_Reports_Bulk_Output.zip",
+                    mime="application/zip",
+                )
+
+            if skips:
+                st.subheader("Skipped Files / Organisations")
+                skip_df = pd.DataFrame(skips)
+                st.dataframe(skip_df, use_container_width=True)
+
+        except Exception as e:
+            st.error(f"Bulk processing failed: {e}")
+
+    else:
+        st.info("Please upload a ZIP file containing Revenue and Devices CSV/XLSX files.")
