@@ -279,6 +279,43 @@ def _read_csv_loose(file_bytes: bytes, encoding: str) -> pd.DataFrame:
 
 
 
+def coerce_required_numeric_column(
+    df: pd.DataFrame,
+    column_name: str,
+    expected_type: str,
+    allow_blank: bool = False,
+) -> pd.Series:
+    if column_name not in df.columns:
+        raise ValueError(f"Required column '{column_name}' is missing.")
+
+    raw_series = df[column_name]
+    normalized = raw_series.astype(str).str.strip()
+    normalized = normalized.replace({"": pd.NA, "nan": pd.NA, "None": pd.NA, "none": pd.NA})
+
+    converted = pd.to_numeric(normalized, errors="coerce")
+    invalid_mask = normalized.notna() & converted.isna()
+    if invalid_mask.any():
+        sample_values = raw_series[invalid_mask].astype(str).head(5).tolist()
+        raise ValueError(
+            f"Column '{column_name}' must be {expected_type}. Invalid values found: {sample_values}"
+        )
+
+    if not allow_blank and converted.isna().any():
+        raise ValueError(f"Column '{column_name}' must be {expected_type} and cannot be blank.")
+
+    if expected_type == "int":
+        fractional_mask = converted.notna() & (converted % 1 != 0)
+        if fractional_mask.any():
+            sample_values = raw_series[fractional_mask].astype(str).head(5).tolist()
+            raise ValueError(
+                f"Column '{column_name}' must contain whole numbers only. Invalid values found: {sample_values}"
+            )
+        return converted.astype("Int64")
+
+    return converted.astype(float)
+
+
+
 def read_table_file(file_name: str, file_bytes: bytes) -> pd.DataFrame:
     lower_name = file_name.lower()
     log_info("Reading input file", file_name=file_name, file_size_bytes=len(file_bytes))
@@ -870,6 +907,15 @@ def process_revenue_and_devices(
     if "accountorg" not in revenue_df.columns:
         revenue_df["accountorg"] = ""
 
+    revenue_df["transactionid"] = coerce_required_numeric_column(revenue_df, "transactionid", "int")
+    revenue_df["connector"] = coerce_required_numeric_column(revenue_df, "connector", "int")
+    revenue_df["repayment"] = coerce_required_numeric_column(revenue_df, "repayment", "float")
+    revenue_df["totalenergykwh"] = coerce_required_numeric_column(revenue_df, "totalenergykwh", "float")
+    revenue_df["collectedfee"] = coerce_required_numeric_column(revenue_df, "collectedfee", "float")
+    revenue_df["prtransactionfee"] = coerce_required_numeric_column(revenue_df, "prtransactionfee", "float")
+    if "totalincvat" in revenue_df.columns:
+        revenue_df["totalincvat"] = coerce_required_numeric_column(revenue_df, "totalincvat", "float")
+
     if "device" in revenue_df.columns and "device" in devices_df.columns:
         merged = revenue_df.merge(
             devices_df,
@@ -891,13 +937,6 @@ def process_revenue_and_devices(
 
     merged["start_parsed"] = parse_datetime_series(merged["start"])
     merged["end_parsed"] = parse_datetime_series(merged["end"])
-
-    merged["repayment"] = pd.to_numeric(merged["repayment"], errors="coerce").fillna(0)
-    merged["totalenergykwh"] = pd.to_numeric(merged["totalenergykwh"], errors="coerce").fillna(0)
-    merged["collectedfee"] = pd.to_numeric(merged["collectedfee"], errors="coerce").fillna(0)
-    merged["prtransactionfee"] = pd.to_numeric(merged["prtransactionfee"], errors="coerce").fillna(0)
-    if "totalincvat" in merged.columns:
-        merged["totalincvat"] = pd.to_numeric(merged["totalincvat"], errors="coerce").fillna(0)
 
     merged["ResolvedCharger"] = merged.apply(build_group_key, axis=1)
 
