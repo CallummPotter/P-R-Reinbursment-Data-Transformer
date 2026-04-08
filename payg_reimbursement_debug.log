@@ -1,0 +1,42 @@
+2026-04-08 09:07:36,076 INFO App mode selected | {'bulk_mode': False}
+2026-04-08 09:07:40,131 INFO App mode selected | {'bulk_mode': False}
+2026-04-08 09:07:43,283 INFO App mode selected | {'bulk_mode': False}
+2026-04-08 09:07:43,283 INFO Single-file processing requested | {'revenue_file': 'Revenue_export_07-04-2026_13-59.csv', 'revenue_size_bytes': 25597, 'devices_file': 'Devices_export_07-04-2026_13_58.csv', 'devices_size_bytes': 2451}
+2026-04-08 09:07:43,283 INFO Reading input file | {'file_name': 'Revenue_export_07-04-2026_13-59.csv', 'file_size_bytes': 25597}
+2026-04-08 09:07:43,283 INFO Trying CSV parser | {'file_name': 'Revenue_export_07-04-2026_13-59.csv', 'mode': 'pandas', 'options': {'encoding': 'utf-8-sig'}}
+2026-04-08 09:07:43,287 INFO CSV file loaded successfully | {'file_name': 'Revenue_export_07-04-2026_13-59.csv', 'rows': 162, 'columns': ['TransactionID', 'Device', 'StationName', 'Start', 'End', 'Organisation', 'Connector', 'Total_Energy (kWh)', 'Collected_fee', 'PR_Transaction_fee', 'Repayment', 'MPAN']}
+2026-04-08 09:07:43,290 INFO Reading input file | {'file_name': 'Devices_export_07-04-2026_13_58.csv', 'file_size_bytes': 2451}
+2026-04-08 09:07:43,290 INFO Trying CSV parser | {'file_name': 'Devices_export_07-04-2026_13_58.csv', 'mode': 'pandas', 'options': {'encoding': 'utf-8-sig'}}
+2026-04-08 09:07:43,291 WARNING CSV parser attempt failed | {'file_name': 'Devices_export_07-04-2026_13_58.csv', 'mode': 'pandas', 'options': {'encoding': 'utf-8-sig'}, 'error': 'Error tokenizing data. C error: Expected 21 fields in line 3, saw 25\n'}
+2026-04-08 09:07:43,292 INFO Trying CSV parser | {'file_name': 'Devices_export_07-04-2026_13_58.csv', 'mode': 'pandas', 'options': {'encoding': 'utf-8-sig', 'sep': None, 'engine': 'python'}}
+2026-04-08 09:07:43,300 WARNING CSV parser attempt failed | {'file_name': 'Devices_export_07-04-2026_13_58.csv', 'mode': 'pandas', 'options': {'encoding': 'utf-8-sig', 'sep': None, 'engine': 'python'}, 'error': 'Expected 21 fields in line 3, saw 25'}
+2026-04-08 09:07:43,300 INFO Trying CSV parser | {'file_name': 'Devices_export_07-04-2026_13_58.csv', 'mode': 'pandas', 'options': {'encoding': 'cp1252'}}
+2026-04-08 09:07:43,300 WARNING CSV parser attempt failed | {'file_name': 'Devices_export_07-04-2026_13_58.csv', 'mode': 'pandas', 'options': {'encoding': 'cp1252'}, 'error': 'Error tokenizing data. C error: Expected 21 fields in line 3, saw 25\n'}
+2026-04-08 09:07:43,300 INFO Trying CSV parser | {'file_name': 'Devices_export_07-04-2026_13_58.csv', 'mode': 'pandas', 'options': {'encoding': 'cp1252', 'sep': None, 'engine': 'python'}}
+2026-04-08 09:07:43,302 WARNING CSV parser attempt failed | {'file_name': 'Devices_export_07-04-2026_13_58.csv', 'mode': 'pandas', 'options': {'encoding': 'cp1252', 'sep': None, 'engine': 'python'}, 'error': 'Expected 21 fields in line 3, saw 25'}
+2026-04-08 09:07:43,303 INFO Trying CSV parser | {'file_name': 'Devices_export_07-04-2026_13_58.csv', 'mode': 'loose', 'options': {'encoding': 'utf-8-sig'}}
+2026-04-08 09:07:43,303 INFO CSV file loaded successfully | {'file_name': 'Devices_export_07-04-2026_13_58.csv', 'rows': 6, 'columns': ['DeviceDBID', 'HubeleonID', 'DeviceName', 'DeviceOrganisation', 'DeviceManufacturer', 'DeviceModel', 'DeviceStatus', 'LocationName', 'LocationAddress', 'LocationPostcode', 'Longitude', 'Latitude', 'NumberOfUses', 'TotalEnergyProvided', 'MPAN', 'PurchaseDate', 'Warranty_Months', 'Install_Date', 'NextMaintenanceDate', 'Iccid', 'AdditionalInfo', 'extra_column_22', 'extra_column_23', 'extra_column_24', 'extra_column_25']}
+2026-04-08 09:07:43,307 INFO Starting revenue/devices processing | {'revenue_rows': 162, 'devices_rows': 6, 'segmented': False, 'selected_commercial_partners': []}
+2026-04-08 09:07:43,518 INFO Building Excel output | {'organisation': 'Spelthorne Borough Council', 'year': 2026, 'quarter': 1, 'agg_rows': 5, 'raw_rows': 162, 'segmented': False, 'selected_commercial_partners': []}
+2026-04-08 09:07:43,659 INFO Excel output built successfully | {'organisation': 'Spelthorne Borough Council', 'output_size_bytes': 42340}
+2026-04-08 09:07:43,659 INFO Revenue/devices processing completed | {'organisation': 'Spelthorne Borough Council', 'year': 2026, 'quarter': 1, 'chargers': 5, 'total_sessions': 162, 'dropped_count': 0}
+2026-04-08 09:07:48,851 INFO App mode selected | {'bulk_mode': False}
+2026-04-08 09:07:48,852 INFO Single-file processing requested | {'revenue_file': 'Revenue_export_07-04-2026_13-59.csv', 'revenue_size_bytes': 25597, 'devices_file': 'Devices_export_07-04-2026_13_58.csv', 'devices_size_bytes': 2451}
+2026-04-08 09:07:48,853 INFO Reading input file | {'file_name': 'Revenue_export_07-04-2026_13-59.csv', 'file_size_bytes': 25597}
+2026-04-08 09:07:48,853 INFO Trying CSV parser | {'file_name': 'Revenue_export_07-04-2026_13-59.csv', 'mode': 'pandas', 'options': {'encoding': 'utf-8-sig'}}
+2026-04-08 09:07:48,855 INFO CSV file loaded successfully | {'file_name': 'Revenue_export_07-04-2026_13-59.csv', 'rows': 162, 'columns': ['TransactionID', 'Device', 'StationName', 'Start', 'End', 'Organisation', 'Connector', 'Total_Energy (kWh)', 'Collected_fee', 'PR_Transaction_fee', 'Repayment', 'MPAN']}
+2026-04-08 09:07:48,855 INFO Reading input file | {'file_name': 'Devices_export_07-04-2026_13_58.csv', 'file_size_bytes': 2451}
+2026-04-08 09:07:48,855 INFO Trying CSV parser | {'file_name': 'Devices_export_07-04-2026_13_58.csv', 'mode': 'pandas', 'options': {'encoding': 'utf-8-sig'}}
+2026-04-08 09:07:48,856 WARNING CSV parser attempt failed | {'file_name': 'Devices_export_07-04-2026_13_58.csv', 'mode': 'pandas', 'options': {'encoding': 'utf-8-sig'}, 'error': 'Error tokenizing data. C error: Expected 21 fields in line 3, saw 25\n'}
+2026-04-08 09:07:48,856 INFO Trying CSV parser | {'file_name': 'Devices_export_07-04-2026_13_58.csv', 'mode': 'pandas', 'options': {'encoding': 'utf-8-sig', 'sep': None, 'engine': 'python'}}
+2026-04-08 09:07:48,857 WARNING CSV parser attempt failed | {'file_name': 'Devices_export_07-04-2026_13_58.csv', 'mode': 'pandas', 'options': {'encoding': 'utf-8-sig', 'sep': None, 'engine': 'python'}, 'error': 'Expected 21 fields in line 3, saw 25'}
+2026-04-08 09:07:48,857 INFO Trying CSV parser | {'file_name': 'Devices_export_07-04-2026_13_58.csv', 'mode': 'pandas', 'options': {'encoding': 'cp1252'}}
+2026-04-08 09:07:48,858 WARNING CSV parser attempt failed | {'file_name': 'Devices_export_07-04-2026_13_58.csv', 'mode': 'pandas', 'options': {'encoding': 'cp1252'}, 'error': 'Error tokenizing data. C error: Expected 21 fields in line 3, saw 25\n'}
+2026-04-08 09:07:48,858 INFO Trying CSV parser | {'file_name': 'Devices_export_07-04-2026_13_58.csv', 'mode': 'pandas', 'options': {'encoding': 'cp1252', 'sep': None, 'engine': 'python'}}
+2026-04-08 09:07:48,858 WARNING CSV parser attempt failed | {'file_name': 'Devices_export_07-04-2026_13_58.csv', 'mode': 'pandas', 'options': {'encoding': 'cp1252', 'sep': None, 'engine': 'python'}, 'error': 'Expected 21 fields in line 3, saw 25'}
+2026-04-08 09:07:48,859 INFO Trying CSV parser | {'file_name': 'Devices_export_07-04-2026_13_58.csv', 'mode': 'loose', 'options': {'encoding': 'utf-8-sig'}}
+2026-04-08 09:07:48,860 INFO CSV file loaded successfully | {'file_name': 'Devices_export_07-04-2026_13_58.csv', 'rows': 6, 'columns': ['DeviceDBID', 'HubeleonID', 'DeviceName', 'DeviceOrganisation', 'DeviceManufacturer', 'DeviceModel', 'DeviceStatus', 'LocationName', 'LocationAddress', 'LocationPostcode', 'Longitude', 'Latitude', 'NumberOfUses', 'TotalEnergyProvided', 'MPAN', 'PurchaseDate', 'Warranty_Months', 'Install_Date', 'NextMaintenanceDate', 'Iccid', 'AdditionalInfo', 'extra_column_22', 'extra_column_23', 'extra_column_24', 'extra_column_25']}
+2026-04-08 09:07:48,860 INFO Starting revenue/devices processing | {'revenue_rows': 162, 'devices_rows': 6, 'segmented': False, 'selected_commercial_partners': []}
+2026-04-08 09:07:49,100 INFO Building Excel output | {'organisation': 'Spelthorne Borough Council', 'year': 2026, 'quarter': 1, 'agg_rows': 5, 'raw_rows': 162, 'segmented': False, 'selected_commercial_partners': []}
+2026-04-08 09:07:49,171 INFO Excel output built successfully | {'organisation': 'Spelthorne Borough Council', 'output_size_bytes': 42341}
+2026-04-08 09:07:49,177 INFO Revenue/devices processing completed | {'organisation': 'Spelthorne Borough Council', 'year': 2026, 'quarter': 1, 'chargers': 5, 'total_sessions': 162, 'dropped_count': 0}

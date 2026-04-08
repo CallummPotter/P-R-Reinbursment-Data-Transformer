@@ -1,6 +1,9 @@
 import io
 import re
 import zipfile
+import csv
+import logging
+import traceback
 from collections import defaultdict
 from typing import Tuple
 
@@ -13,9 +16,65 @@ st.set_page_config(page_title="PAYG Reimbursement Calculator", layout="wide")
 st.image("LOGO.png", width=250)
 st.title("PAYG Reimbursement Calculator")
 
+
+LOGGER = logging.getLogger("payg_reimbursement_calculator")
+if not LOGGER.handlers:
+    LOGGER.setLevel(logging.INFO)
+    formatter = logging.Formatter("%(asctime)s %(levelname)s %(message)s")
+
+    stream_handler = logging.StreamHandler()
+    stream_handler.setFormatter(formatter)
+    LOGGER.addHandler(stream_handler)
+
+    file_handler = logging.FileHandler("payg_reimbursement_debug.log", encoding="utf-8")
+    file_handler.setFormatter(formatter)
+    LOGGER.addHandler(file_handler)
+
+    LOGGER.propagate = False
+
 # ========================
 # Helpers
 # ========================
+
+
+def format_error_details(exc: Exception) -> str:
+    return "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
+
+
+
+def log_info(message: str, **context) -> None:
+    if context:
+        LOGGER.info("%s | %s", message, context)
+    else:
+        LOGGER.info(message)
+
+
+
+def log_warning(message: str, **context) -> None:
+    if context:
+        LOGGER.warning("%s | %s", message, context)
+    else:
+        LOGGER.warning(message)
+
+
+
+def log_exception(message: str, exc: Exception, **context) -> str:
+    error_details = format_error_details(exc)
+    if context:
+        LOGGER.error("%s | %s\n%s", message, context, error_details)
+    else:
+        LOGGER.error("%s\n%s", message, error_details)
+    return error_details
+
+
+
+def show_error(message: str, exc: Exception, **context) -> None:
+    error_details = log_exception(message, exc, **context)
+    st.error(f"{message}: {exc}")
+    with st.expander("Error details"):
+        if context:
+            st.json(context)
+        st.code(error_details, language="text")
 
 
 def normalize_string(value) -> str:
@@ -171,13 +230,106 @@ def deduplicate_sessions_with_audit(df: pd.DataFrame) -> Tuple[pd.DataFrame, pd.
 
 
 
+def _choose_delimiter(sample_text: str) -> str:
+    candidate_delimiters = [",", ";", "\t", "|"]
+    sample_lines = [line for line in sample_text.splitlines()[:20] if line.strip()]
+    if not sample_lines:
+        return ","
+
+    best_delimiter = ","
+    best_score = (-1, float("inf"))
+
+    for delimiter in candidate_delimiters:
+        counts = [line.count(delimiter) for line in sample_lines]
+        mean_count = sum(counts) / len(counts)
+        if mean_count <= 0:
+            continue
+
+        variance = sum((count - mean_count) ** 2 for count in counts) / len(counts)
+        score = (mean_count, -variance)
+        if score > best_score:
+            best_score = score
+            best_delimiter = delimiter
+
+    return best_delimiter
+
+
+
+def _read_csv_loose(file_bytes: bytes, encoding: str) -> pd.DataFrame:
+    text = file_bytes.decode(encoding)
+    delimiter = _choose_delimiter(text)
+
+    rows = list(csv.reader(io.StringIO(text), delimiter=delimiter))
+    rows = [row for row in rows if any(str(cell).strip() for cell in row)]
+    if not rows:
+        return pd.DataFrame()
+
+    header = [str(cell).strip() for cell in rows[0]]
+    max_cols = max(len(row) for row in rows)
+
+    if len(header) < max_cols:
+        header = header + [f"extra_column_{i}" for i in range(len(header) + 1, max_cols + 1)]
+
+    normalized_rows = []
+    for row in rows[1:]:
+        padded_row = list(row) + [""] * (max_cols - len(row))
+        normalized_rows.append(padded_row[:max_cols])
+
+    return pd.DataFrame(normalized_rows, columns=header[:max_cols])
+
+
+
 def read_table_file(file_name: str, file_bytes: bytes) -> pd.DataFrame:
     lower_name = file_name.lower()
+    log_info("Reading input file", file_name=file_name, file_size_bytes=len(file_bytes))
 
     if lower_name.endswith(".csv"):
-        return pd.read_csv(io.BytesIO(file_bytes))
+        csv_attempts = [
+            ("pandas", {"encoding": "utf-8-sig"}),
+            ("pandas", {"encoding": "utf-8-sig", "sep": None, "engine": "python"}),
+            ("pandas", {"encoding": "cp1252"}),
+            ("pandas", {"encoding": "cp1252", "sep": None, "engine": "python"}),
+            ("loose", {"encoding": "utf-8-sig"}),
+            ("loose", {"encoding": "cp1252"}),
+        ]
+
+        last_error = None
+        for mode, options in csv_attempts:
+            try:
+                log_info("Trying CSV parser", file_name=file_name, mode=mode, options=options)
+                if mode == "pandas":
+                    df = pd.read_csv(io.BytesIO(file_bytes), **options)
+                else:
+                    df = _read_csv_loose(file_bytes, options["encoding"])
+                log_info(
+                    "CSV file loaded successfully",
+                    file_name=file_name,
+                    rows=len(df),
+                    columns=df.columns.tolist(),
+                )
+                return df
+            except Exception as exc:
+                last_error = exc
+                log_warning(
+                    "CSV parser attempt failed",
+                    file_name=file_name,
+                    mode=mode,
+                    options=options,
+                    error=str(exc),
+                )
+
+        raise ValueError(
+            "Could not read the CSV file. Please check that it is a valid CSV with consistent columns."
+        ) from last_error
     if lower_name.endswith(".xlsx"):
-        return pd.read_excel(io.BytesIO(file_bytes))
+        df = pd.read_excel(io.BytesIO(file_bytes))
+        log_info(
+            "Excel file loaded successfully",
+            file_name=file_name,
+            rows=len(df),
+            columns=df.columns.tolist(),
+        )
+        return df
 
     raise ValueError("Unsupported file type. Only CSV and XLSX are allowed.")
 
@@ -339,6 +491,16 @@ def build_output_excel_bytes(
     selected_commercial_partners: list[str] | None = None,
     include_segmented_sections: bool = False,
 ) -> io.BytesIO:
+    log_info(
+        "Building Excel output",
+        organisation=organisation,
+        year=year,
+        quarter=quarter,
+        agg_rows=len(agg_df),
+        raw_rows=len(raw_revenue_df),
+        segmented=include_segmented_sections,
+        selected_commercial_partners=selected_commercial_partners or [],
+    )
     output = io.BytesIO()
     selected_commercial_partners = selected_commercial_partners or []
 
@@ -666,6 +828,7 @@ def build_output_excel_bytes(
             worksheet.merge_range("I14:L14", "Amount of VAT claimed by 3rd Parties", fmt_key_pink)
 
     output.seek(0)
+    log_info("Excel output built successfully", organisation=organisation, output_size_bytes=output.getbuffer().nbytes)
     return output
 
 
@@ -677,6 +840,13 @@ def process_revenue_and_devices(
     selected_commercial_partners: list[str] | None = None,
     include_segmented_sections: bool = False,
 ) -> dict:
+    log_info(
+        "Starting revenue/devices processing",
+        revenue_rows=len(revenue_raw),
+        devices_rows=len(devices_raw),
+        segmented=include_segmented_sections,
+        selected_commercial_partners=selected_commercial_partners or [],
+    )
     selected_commercial_partners = selected_commercial_partners or []
 
     revenue_df = standardize_columns(revenue_raw)
@@ -781,6 +951,16 @@ def process_revenue_and_devices(
     usage_summary_df = build_usage_summary_df(deduped, selected_commercial_partners)
     commercial_partners_df = build_commercial_partners_df(deduped, selected_commercial_partners)
 
+    log_info(
+        "Revenue/devices processing completed",
+        organisation=organisation,
+        year=year,
+        quarter=quarter,
+        chargers=len(agg_df),
+        total_sessions=total_sessions,
+        dropped_count=dropped_count,
+    )
+
     return {
         "organisation": organisation,
         "year": year,
@@ -806,6 +986,7 @@ def process_revenue_and_devices(
 
 
 def process_bulk_zip(zip_file, logo_image: Image.Image):
+    log_info("Starting bulk ZIP processing", zip_name=getattr(zip_file, "name", "uploaded.zip"))
     successes = []
     skips = []
 
@@ -814,6 +995,7 @@ def process_bulk_zip(zip_file, logo_image: Image.Image):
 
     with zipfile.ZipFile(zip_file) as zf:
         members = [m for m in zf.infolist() if not m.is_dir()]
+        log_info("ZIP contents inspected", member_count=len(members))
 
         if not members:
             raise ValueError("The ZIP file is empty.")
@@ -825,6 +1007,7 @@ def process_bulk_zip(zip_file, logo_image: Image.Image):
 
         for member in supported_members:
             try:
+                log_info("Reading ZIP member", member_name=member.filename, file_size_bytes=member.file_size)
                 file_bytes = zf.read(member.filename)
                 raw_df = read_table_file(member.filename, file_bytes)
                 standardized_df = standardize_columns(raw_df)
@@ -836,6 +1019,7 @@ def process_bulk_zip(zip_file, logo_image: Image.Image):
                 elif kind == "device":
                     device_files_by_org[org].append({"name": member.filename, "raw_df": raw_df})
                 else:
+                    log_warning("ZIP member type could not be determined", member_name=member.filename, organisation=org)
                     skips.append({
                         "file": member.filename,
                         "organisation": org,
@@ -843,6 +1027,7 @@ def process_bulk_zip(zip_file, logo_image: Image.Image):
                     })
 
             except Exception as e:
+                log_exception("Failed to read ZIP member", e, member_name=member.filename)
                 skips.append({
                     "file": member.filename,
                     "organisation": "Unknown Organisation",
@@ -900,6 +1085,12 @@ def process_bulk_zip(zip_file, logo_image: Image.Image):
             device_file = device_candidates[0]
 
             try:
+                log_info(
+                    "Processing matched organisation pair",
+                    organisation=org,
+                    revenue_file=revenue_file["name"],
+                    device_file=device_file["name"],
+                )
                 result = process_revenue_and_devices(
                     revenue_raw=revenue_file["raw_df"],
                     devices_raw=device_file["raw_df"],
@@ -922,6 +1113,13 @@ def process_bulk_zip(zip_file, logo_image: Image.Image):
                 })
 
             except Exception as e:
+                log_exception(
+                    "Matched organisation pair failed to process",
+                    e,
+                    organisation=org,
+                    revenue_file=revenue_file["name"],
+                    device_file=device_file["name"],
+                )
                 skips.append({
                     "file": f"{revenue_file['name']} + {device_file['name']}",
                     "organisation": org,
@@ -929,6 +1127,7 @@ def process_bulk_zip(zip_file, logo_image: Image.Image):
                 })
 
     zip_output.seek(0)
+    log_info("Bulk ZIP processing finished", successes=len(successes), skips=len(skips))
     return zip_output, successes, skips
 
 
@@ -937,6 +1136,7 @@ def process_bulk_zip(zip_file, logo_image: Image.Image):
 # ========================
 
 bulk_mode = st.toggle("Bulk upload mode (ZIP input)", value=False)
+log_info("App mode selected", bulk_mode=bulk_mode)
 
 if not bulk_mode:
     revenue_file = st.file_uploader("Upload Revenue File (CSV or Excel)", type=["csv", "xlsx"])
@@ -944,6 +1144,13 @@ if not bulk_mode:
 
     if revenue_file and devices_file:
         try:
+            log_info(
+                "Single-file processing requested",
+                revenue_file=revenue_file.name,
+                revenue_size_bytes=revenue_file.size,
+                devices_file=devices_file.name,
+                devices_size_bytes=devices_file.size,
+            )
             revenue_raw = read_table_file(revenue_file.name, revenue_file.getvalue())
             devices_raw = read_table_file(devices_file.name, devices_file.getvalue())
             revenue_standardized = standardize_columns(revenue_raw)
@@ -953,10 +1160,22 @@ if not bulk_mode:
 
             if segment_commercial_partners:
                 if "accountorg" not in revenue_standardized.columns:
+                    log_warning(
+                        "Commercial partner segmentation unavailable",
+                        revenue_file=revenue_file.name,
+                        missing_column="accountorg",
+                        detected_columns=revenue_standardized.columns.tolist(),
+                    )
                     st.error("The uploaded Revenue file does not contain an AccountOrg column, so commercial partner segmentation cannot be used.")
                     st.stop()
 
                 if "totalincvat" not in revenue_standardized.columns:
+                    log_warning(
+                        "Commercial partner segmentation unavailable",
+                        revenue_file=revenue_file.name,
+                        missing_column="totalincvat",
+                        detected_columns=revenue_standardized.columns.tolist(),
+                    )
                     st.error(
                         "The uploaded Revenue file does not contain a 'Total (Inc. VAT)' column, so the Commercial Partners section cannot be created. "
                         "Expected standardised column name: totalincvat."
@@ -1054,7 +1273,13 @@ if not bulk_mode:
             )
 
         except Exception as e:
-            st.error(f"Processing failed: {e}")
+            show_error(
+                "Processing failed",
+                e,
+                revenue_file=getattr(revenue_file, "name", None),
+                devices_file=getattr(devices_file, "name", None),
+                bulk_mode=bulk_mode,
+            )
 
     else:
         st.info("Please upload both the Revenue file and the Devices file.")
@@ -1067,6 +1292,11 @@ else:
 
     if bulk_zip:
         try:
+            log_info(
+                "Bulk processing requested",
+                zip_file=bulk_zip.name,
+                zip_size_bytes=bulk_zip.size,
+            )
             zip_output, successes, skips = process_bulk_zip(bulk_zip, logo_image)
 
             if successes:
@@ -1092,7 +1322,12 @@ else:
                 st.dataframe(skip_df, use_container_width=True)
 
         except Exception as e:
-            st.error(f"Bulk processing failed: {e}")
+            show_error(
+                "Bulk processing failed",
+                e,
+                zip_file=getattr(bulk_zip, "name", None),
+                bulk_mode=bulk_mode,
+            )
 
     else:
         st.info("Please upload a ZIP file containing Revenue and Devices CSV/XLSX files.")      
